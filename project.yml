@@ -1,7 +1,4 @@
-
 ---
-# Ceedling 1.0.1 Configuration for gaming-core
-
 :project:
   :name: gaming-core
   :build_root: build/
@@ -22,6 +19,7 @@
     - src/**
   :include:
     - src/**
+    - src/hal/**
   :support:
     - tests/support
   :libraries: []
@@ -29,6 +27,10 @@
 :files:
   :test: []
   :source: []
+  :support:
+    # 關鍵：只包含 hal_interface.c，不包含 hal_init.c 和 hal_mock.c
+    # 這樣 hal_init 和 mock_hal_* 函數就不會重複定義
+    - src/hal_interface.c
 
 :defines:
   :common: &common_defines
@@ -41,8 +43,6 @@
   :test_preprocess:
     - *common_defines
     - TEST
-    - UNITY_INCLUDE_DOUBLE
-    - UNITY_DOUBLE_VERBOSE
 
 :flags:
   :test:
@@ -53,8 +53,11 @@
         - -Wextra
         - -Werror
         - -Wno-unused-parameter
+        - -Wno-missing-field-initializers
+        - -Wno-enum-conversion
     :link:
-      :*: []
+      :*:
+        - -lm
 
 :cmock:
   :mock_prefix: mock_
@@ -92,23 +95,15 @@
     :html_medium_threshold: 75
     :html_high_threshold: 90
 
-# 如果需要生成 XML 報告給 CI
 :xml_tests_report:
   :artifact_filename: report.xml
 
-# 插件配置
 :plugins:
   :enabled:
-    #- stdout_pretty_tests_report
     - module_generator
     - gcov
 
-# 環境變數（可選）
 :environment: []
 
-# Test 前置處理器（如果需要）
 :test_build:
   :use_assembly: FALSE
-
-
-
