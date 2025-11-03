@@ -1,0 +1,45 @@
+
+config gaming 'core'
+	option enabled '1'
+	option log_level 'info'
+	option log_target 'syslog'
+	# 裝置類型: client, server, 或留空使用 ADC 自動偵測
+	# option device_type 'client'
+	# option device_type 'server'
+
+config device 'hardware'
+	option adc_device '/dev/ADC'
+	option adc_threshold '512'
+	# ADC < threshold = client
+	# ADC >= threshold = server
+
+config gpio 'pins'
+	# GPIO Pin 配置 (根據實際硬體調整)
+	option button_pin '16'
+	option led_r_pin '17'
+	option led_g_pin '18'
+	option led_b_pin '19'
+	option debounce_ms '200'
+
+config led 'colors'
+	# LED 顏色配置 (R,G,B 格式, 0-255)
+	option ps5_on '255,255,255'          # 白色
+	option ps5_standby '255,165,0'       # 橙色
+	option ps5_off '0,0,0'               # 關閉
+	option vpn_connecting '0,0,255'      # 藍色
+	option vpn_connected '0,255,0'       # 綠色
+	option vpn_error '255,0,0'           # 紅色
+	option system_error '255,0,0'        # 紅色
+	option system_startup '255,255,0'    # 黃色
+
+config cache 'settings'
+	# 快取設定
+	option device_type_cache '/var/run/gaming_device_type'
+	option ps5_ip_cache '/var/run/ps5_ip.cache'
+	option ps5_mac_cache '/var/run/ps5_mac.txt'
+
+config daemon 'settings'
+	# Daemon 通用設定
+	option respawn_threshold '3'
+	option respawn_timeout '5'
+	option respawn_retry '0'

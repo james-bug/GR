@@ -1,0 +1,303 @@
+#!/bin/sh /etc/rc.common
+# Gaming System - Unified Init Script
+# Supports both Client and Server devices through device type detection
+# Copyright (C) 2025
+
+START=95
+STOP=10
+
+USE_PROCD=1
+
+# 常數定義
+DEVICE_TYPE_CACHE="/var/run/gaming_device_type"
+DEVICE_TYPE_CONFIG="/etc/config/gaming"
+GAMING_CLIENT_BIN="/usr/bin/gaming-client"
+GAMING_SERVER_BIN="/usr/bin/gaming-server"
+LOG_TAG="gaming-init"
+
+# 裝置類型
+DEVICE_TYPE_UNKNOWN="unknown"
+DEVICE_TYPE_CLIENT="client"
+DEVICE_TYPE_SERVER="server"
+
+# 日誌函數
+log_info() {
+    logger -t "$LOG_TAG" -p user.info "$1"
+    echo "[INFO] $1"
+}
+
+log_error() {
+    logger -t "$LOG_TAG" -p user.err "$1"
+    echo "[ERROR] $1" >&2
+}
+
+log_warn() {
+    logger -t "$LOG_TAG" -p user.warn "$1"
+    echo "[WARN] $1" >&2
+}
+
+# 讀取快取的裝置類型
+read_cached_device_type() {
+    local cached_type=""
+    
+    if [ -f "$DEVICE_TYPE_CACHE" ]; then
+        cached_type=$(cat "$DEVICE_TYPE_CACHE" 2>/dev/null | tr -d '[:space:]')
+        
+        if [ "$cached_type" = "$DEVICE_TYPE_CLIENT" ] || [ "$cached_type" = "$DEVICE_TYPE_SERVER" ]; then
+            log_info "Found cached device type: $cached_type"
+            echo "$cached_type"
+            return 0
+        else
+            log_warn "Invalid cached device type: $cached_type"
+        fi
+    fi
+    
+    echo "$DEVICE_TYPE_UNKNOWN"
+    return 1
+}
+
+# 從 UCI 配置讀取裝置類型
+read_config_device_type() {
+    local config_type=""
+    
+    # 檢查 UCI 配置是否存在
+    if [ -f "$DEVICE_TYPE_CONFIG" ]; then
+        config_type=$(uci get gaming.core.device_type 2>/dev/null | tr -d '[:space:]')
+        
+        if [ "$config_type" = "$DEVICE_TYPE_CLIENT" ] || [ "$config_type" = "$DEVICE_TYPE_SERVER" ]; then
+            log_info "Found config device type: $config_type"
+            echo "$config_type"
+            return 0
+        else
+            log_warn "Invalid config device type: $config_type"
+        fi
+    fi
+    
+    echo "$DEVICE_TYPE_UNKNOWN"
+    return 1
+}
+
+# 使用 ADC Reader 偵測裝置類型 (未來實作)
+detect_device_type_adc() {
+    # TODO: 當硬體確定後,這裡將實作真實的 ADC 讀取邏輯
+    # 目前返回 unknown,讓系統使用其他方法
+    
+    # 未來實作示例:
+    # local adc_value=$(od -An -tu2 -N2 /dev/ADC 2>/dev/null | tr -d '[:space:]')
+    # if [ -n "$adc_value" ]; then
+    #     if [ "$adc_value" -lt 512 ]; then
+    #         echo "$DEVICE_TYPE_CLIENT"
+    #         return 0
+    #     else
+    #         echo "$DEVICE_TYPE_SERVER"
+    #         return 0
+    #     fi
+    # fi
+    
+    log_info "ADC detection not implemented yet, using fallback methods"
+    echo "$DEVICE_TYPE_UNKNOWN"
+    return 1
+}
+
+# 綜合判定裝置類型
+detect_device_type() {
+    local device_type="$DEVICE_TYPE_UNKNOWN"
+    
+    log_info "Starting device type detection..."
+    
+    # 優先級 1: 快取檔案 (最快)
+    device_type=$(read_cached_device_type)
+    if [ "$device_type" != "$DEVICE_TYPE_UNKNOWN" ]; then
+        log_info "Device type from cache: $device_type"
+        return 0
+    fi
+    
+    # 優先級 2: ADC 硬體判定 (未來)
+    device_type=$(detect_device_type_adc)
+    if [ "$device_type" != "$DEVICE_TYPE_UNKNOWN" ]; then
+        log_info "Device type from ADC: $device_type"
+        # 保存到快取
+        save_device_type_cache "$device_type"
+        return 0
+    fi
+    
+    # 優先級 3: UCI 配置
+    device_type=$(read_config_device_type)
+    if [ "$device_type" != "$DEVICE_TYPE_UNKNOWN" ]; then
+        log_info "Device type from config: $device_type"
+        # 保存到快取
+        save_device_type_cache "$device_type"
+        return 0
+    fi
+    
+    # 無法判定
+    log_error "Unable to detect device type! Please configure manually."
+    log_error "Set device type with: uci set gaming.core.device_type=client (or server)"
+    log_error "Or create cache file: echo 'client' > $DEVICE_TYPE_CACHE"
+    
+    echo "$DEVICE_TYPE_UNKNOWN"
+    return 1
+}
+
+# 保存裝置類型到快取
+save_device_type_cache() {
+    local device_type="$1"
+    
+    # 確保目錄存在
+    mkdir -p "$(dirname "$DEVICE_TYPE_CACHE")"
+    
+    # 寫入快取
+    echo "$device_type" > "$DEVICE_TYPE_CACHE"
+    
+    if [ $? -eq 0 ]; then
+        log_info "Device type cached: $device_type"
+        return 0
+    else
+        log_error "Failed to cache device type"
+        return 1
+    fi
+}
+
+# 驗證二進制檔案
+validate_binary() {
+    local bin_path="$1"
+    local device_type="$2"
+    
+    if [ ! -f "$bin_path" ]; then
+        log_error "$device_type binary not found: $bin_path"
+        return 1
+    fi
+    
+    if [ ! -x "$bin_path" ]; then
+        log_error "$device_type binary not executable: $bin_path"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 啟動 Client Daemon
+start_client() {
+    log_info "Starting Gaming Client daemon..."
+    
+    # 驗證二進制檔案
+    validate_binary "$GAMING_CLIENT_BIN" "client" || return 1
+    
+    procd_open_instance client
+    procd_set_param command "$GAMING_CLIENT_BIN"
+    
+    # Respawn 設置: threshold, timeout, retry
+    procd_set_param respawn 3 5 0
+    
+    # 標準輸出/錯誤重定向
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    
+    # 設置為前台運行
+    procd_set_param nice 0
+    
+    procd_close_instance
+    
+    log_info "Gaming Client daemon started"
+    return 0
+}
+
+# 啟動 Server Daemon
+start_server() {
+    log_info "Starting Gaming Server daemon..."
+    
+    # 驗證二進制檔案
+    validate_binary "$GAMING_SERVER_BIN" "server" || return 1
+    
+    procd_open_instance server
+    procd_set_param command "$GAMING_SERVER_BIN"
+    
+    # Respawn 設置: threshold, timeout, retry
+    procd_set_param respawn 3 5 0
+    
+    # 標準輸出/錯誤重定向
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    
+    # 設置為前台運行
+    procd_set_param nice 0
+    
+    procd_close_instance
+    
+    log_info "Gaming Server daemon started"
+    return 0
+}
+
+# procd start_service 入口點
+start_service() {
+    local device_type
+    local result=1
+    
+    log_info "========================================="
+    log_info "Gaming System Init Script v2.0"
+    log_info "========================================="
+    
+    # 檢查是否啟用
+    local enabled=$(uci get gaming.core.enabled 2>/dev/null)
+    if [ "$enabled" = "0" ]; then
+        log_info "Gaming system is disabled in config"
+        return 0
+    fi
+    
+    # 偵測裝置類型
+    device_type=$(detect_device_type)
+    
+    # 根據裝置類型啟動對應的 daemon
+    case "$device_type" in
+        "$DEVICE_TYPE_CLIENT")
+            log_info "Device type: CLIENT"
+            start_client
+            result=$?
+            ;;
+        
+        "$DEVICE_TYPE_SERVER")
+            log_info "Device type: SERVER"
+            start_server
+            result=$?
+            ;;
+        
+        "$DEVICE_TYPE_UNKNOWN")
+            log_error "Cannot start: Device type unknown"
+            log_error "Please configure device type first!"
+            result=1
+            ;;
+        
+        *)
+            log_error "Invalid device type: $device_type"
+            result=1
+            ;;
+    esac
+    
+    if [ $result -eq 0 ]; then
+        log_info "Gaming System started successfully"
+    else
+        log_error "Gaming System failed to start"
+    fi
+    
+    log_info "========================================="
+    
+    return $result
+}
+
+# procd stop_service 入口點
+stop_service() {
+    log_info "Stopping Gaming System..."
+    # procd 會自動處理實例的停止
+}
+
+# procd reload_service 入口點
+reload_service() {
+    log_info "Reloading Gaming System..."
+    stop
+    start
+}
+
+# 服務觸發器 (當配置檔變更時)
+service_triggers() {
+    procd_add_reload_trigger "gaming"
+}
